@@ -20,10 +20,30 @@ import pytest
 
 @pytest.fixture
 def image_tool():
-    """Fresh import of tools.image_generation_tool per test."""
+    """Fresh import of tools.image_generation_tool per test.
+
+    After reload the module-level lazily-resolved helpers
+    (_ManagedFalSyncClient, _extract_http_status, _normalize_fal_queue_url_format)
+    are still None because the plugin registry isn't populated in test —
+    inject them from the plugin package so tests that call _submit_fal_request()
+    don't hit ``TypeError: 'NoneType' object is not callable``.
+    """
     import importlib
     import tools.image_generation_tool as mod
-    return importlib.reload(mod)
+    reloaded = importlib.reload(mod)
+    # Resolve FAL helpers from the plugin package (same pattern as
+    # test_managed_media_gateways.py and the _patch_tts_provider helper
+    # in test_voice_cli_integration.py).
+    if reloaded._extract_http_status is None:
+        from hermes_agent_fal.fal_common import _extract_http_status as _EHS
+        reloaded._extract_http_status = _EHS
+    if reloaded._ManagedFalSyncClient is None:
+        from hermes_agent_fal.fal_common import _ManagedFalSyncClient as _MSC
+        reloaded._ManagedFalSyncClient = _MSC
+    if reloaded._normalize_fal_queue_url_format is None:
+        from hermes_agent_fal.fal_common import _normalize_fal_queue_url_format as _NFQUF
+        reloaded._normalize_fal_queue_url_format = _NFQUF
+    return reloaded
 
 
 # ---------------------------------------------------------------------------
