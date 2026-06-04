@@ -2172,6 +2172,14 @@ def delegate_task(
     except ValueError as exc:
         return tool_error(str(exc))
 
+    # Role-based model tiering: orchestrator-role children may run on a
+    # higher-reasoning model than leaf workers. delegation.orchestrator_model,
+    # when set, overrides creds["model"] for role=='orchestrator' children only.
+    # It must be a model served by the SAME provider as delegation.provider — it
+    # rides the same resolved credential bundle (base_url/api_key/api_mode);
+    # only the model string changes. Leaf children always keep creds["model"].
+    orchestrator_model = str(cfg.get("orchestrator_model") or "").strip() or None
+
     # Normalize to task list
     max_children = _get_max_concurrent_children()
     recovered_tasks, tasks_error = _recover_tasks_from_json_string(tasks)
@@ -2233,12 +2241,26 @@ def delegate_task(
             # Per-task role beats top-level; normalise again so unknown
             # per-task values warn and degrade to leaf uniformly.
             effective_role = _normalize_role(t.get("role") or top_role)
+            # Orchestrator-role children get the higher-reasoning tier when
+            # delegation.orchestrator_model is configured; leaf workers keep
+            # the default delegation.model.
+            task_model = (
+                orchestrator_model
+                if (orchestrator_model and effective_role == "orchestrator")
+                else creds["model"]
+            )
+            if task_model != creds["model"]:
+                logger.info(
+                    "delegate_task: role=%s child using orchestrator_model=%s "
+                    "(leaf default=%s)",
+                    effective_role, task_model, creds["model"],
+                )
             child = _build_child_agent(
                 task_index=i,
                 goal=t["goal"],
                 context=t.get("context"),
                 toolsets=t.get("toolsets") or toolsets,
-                model=creds["model"],
+                model=task_model,
                 max_iterations=effective_max_iter,
                 task_count=n_tasks,
                 parent_agent=parent_agent,
